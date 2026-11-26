@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Sentinel</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1b2430; --muted:#5d6b7c; --line:#e1e5eb;
+    --accent:#2457d6; --bad:#c62828; --good:#1b7f4b; --warn:#b26a00;
+    --heat0:#eef2f8; --heat1:#2457d6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f141b; --panel:#171e28; --ink:#e7ecf3; --muted:#93a1b3; --line:#27313f;
+           --accent:#6b9bff; --bad:#ff7b72; --good:#4cc38a; --warn:#e3a008; --heat0:#1b2330; --heat1:#6b9bff; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{padding:20px 24px 8px;max-width:1180px;margin:0 auto}
+  h1{margin:0;font-size:22px} .sub{color:var(--muted);margin:2px 0 0}
+  main{max-width:1180px;margin:0 auto;padding:8px 24px 40px;display:grid;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  button,.btn{font:inherit;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+  button.secondary,.btn.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button:disabled{opacity:.5;cursor:wait}
+  input[type=number]{font:inherit;width:90px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+  label{color:var(--muted)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+  .card{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .card h3{margin:0 0 6px;font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  .big{font-size:26px;font-weight:700} .small{color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .tablewrap{overflow-x:auto}
+  .tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
+  .tp{color:var(--good);border-color:var(--good)} .fp{color:var(--bad);border-color:var(--bad)}
+  canvas{width:100%;display:block;border-radius:6px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin-top:8px}
+  .sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:6px}
+  .err{color:var(--bad)} .hidden{display:none}
+  h2{margin:0 0 10px;font-size:16px}
+  .note{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;color:var(--ink);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Log Sentinel</h1>
+  <p class="sub">Unsupervised anomaly detection on network and authentication logs (IsolationForest, per-host per-minute features).</p>
+</header>
+<main>
+  <section class="panel">
+    <div class="controls">
+      <label for="seed">Random seed</label><input id="seed" type="number" value="7" min="0">
+      <button id="runDemo">Run demo on synthetic logs</button>
+      <span style="color:var(--muted)">or</span>
+      <input id="file" type="file" accept=".csv" class="hidden">
+      <button id="pick" class="secondary">Upload your own CSV</button>
+      <a class="btn secondary" href="api/sample.csv" style="text-decoration:none">Download sample CSV</a>
+      <span id="status" class="small"></span>
+    </div>
+    <p class="small" style="margin:10px 0 0">CSV columns: <code>ts, host, event_type</code> (<code>auth</code> or <code>net</code>), optional <code>user, src_ip, dst_ip, dst_port, bytes_out, success</code>.</p>
+    <div id="snapnote" class="note hidden" style="margin-top:10px"></div>
+  </section>
+
+  <section id="metricsPanel" class="panel hidden">
+    <h2>Detection quality on the held-out test period</h2>
+    <div class="cards" id="cards"></div>
+    <p class="small" style="margin-bottom:0">Recall = attack windows caught. Precision = alerts that overlap a real attack. Synthetic data with injected attacks; treat as a pipeline check, not a security claim.</p>
+  </section>
+
+  <section id="heatPanel" class="panel hidden">
+    <h2>Anomaly score by host over time</h2>
+    <canvas id="heat" height="320"></canvas>
+    <div class="legend" id="heatLegend"></div>
+  </section>
+
+  <section id="alertPanel" class="panel hidden">
+    <h2>Alerts</h2>
+    <div class="tablewrap"><table id="alerts"></table></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = t => new Date(t).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+const pct = x => x == null ? 'n/a' : Math.round(x*100) + '%';
+function status(msg, bad){ const el=$('#status'); el.textContent=msg||''; el.className='small'+(bad?' err':''); }
+
+async function call(url, opts){
+  const r = await fetch(url, opts);
+  let body = null; try { body = await r.json(); } catch(e) {}
+  if(!r.ok) throw new Error((body && body.error) || ('request failed (' + r.status + ')'));
+  return body;
+}
+
+function renderCards(d){
+  const m = d.model, r = d.rules;
+  const card = (title, o, extra) => `<div class="card"><h3>${title}</h3>
+    <div class="big">${o.windows_detected}/${o.attack_windows} <span class="small">attacks caught</span></div>
+    <div class="small">recall ${pct(o.recall)} · precision ${pct(o.precision)} · ${o.incidents} alerts</div>${extra||''}</div>`;
+  $('#cards').innerHTML =
+    card('IsolationForest', m) + card('Rule baseline (fixed thresholds)', r) +
+    `<div class="card"><h3>Data</h3><div class="big">${d.n_events.toLocaleString()}</div>
+     <div class="small">events · ${d.n_test_host_minutes.toLocaleString()} test host-minutes · seed ${d.seed}</div></div>`;
+  $('#metricsPanel').classList.remove('hidden');
+}
+
+function renderAlerts(alerts, labelled){
+  const head = `<tr><th>Host</th><th>Start</th><th>End</th><th>Minutes</th><th>Score</th><th>Top feature</th>${labelled?'<th>Ground truth</th>':''}</tr>`;
+  const rows = alerts.map(a => `<tr><td>${a.host}</td><td>${fmt(a.start)}</td><td>${fmt(a.end)}</td>
+    <td>${a.minutes_flagged}</td><td>${a.score.toFixed(3)}</td><td><code>${a.top_feature}</code></td>
+    ${labelled ? `<td>${a.true_positive ? `<span class="tag tp">attack: ${a.attack_kind}</span>` : '<span class="tag fp">false alarm</span>'}</td>` : ''}</tr>`).join('');
+  $('#alerts').innerHTML = head + (rows || `<tr><td colspan="7" class="small">No alerts. Nothing exceeded the anomaly threshold.</td></tr>`);
+  $('#alertPanel').classList.remove('hidden');
+}
+
+function renderHeat(h, attacks){
+  const canvas = $('#heat'), dpr = window.devicePixelRatio || 1;
+  const hosts = h.hosts, W = canvas.clientWidth, labelW = 64, rowH = Math.max(10, Math.min(22, Math.floor(300/Math.max(hosts.length,1))));
+  const H = hosts.length*rowH + 28;
+  canvas.style.height = H+'px'; canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  const cs = getComputedStyle(document.documentElement);
+  const c0 = cs.getPropertyValue('--heat0').trim(), c1 = cs.getPropertyValue('--heat1').trim(), bad = cs.getPropertyValue('--bad').trim(), ink = cs.getPropertyValue('--muted').trim();
+  const plotW = W - labelW, colW = plotW / h.n_minutes;
+  ctx.fillStyle = c0; ctx.fillRect(labelW, 0, plotW, hosts.length*rowH);
+  let min = Infinity, max = -Infinity;
+  for (const k of hosts) for (const [,s] of h.series[k]) { min = Math.min(min,s); max = Math.max(max,s); }
+  hosts.forEach((k, row) => {
+    ctx.fillStyle = ink; ctx.font = '11px system-ui'; ctx.textBaseline = 'middle'; ctx.fillText(k, 4, row*rowH + rowH/2);
+    for (const [i, s, f] of h.series[k]) {
+      const t = (s - min) / Math.max(max - min, 1e-9);
+      ctx.globalAlpha = 0.15 + 0.85*t; ctx.fillStyle = f ? bad : c1;
+      ctx.fillRect(labelW + i*colW, row*rowH+1, Math.max(colW,1.5), rowH-2);
+    }
+  });
+  ctx.globalAlpha = 1;
+  const t0 = new Date(h.t0).getTime();
+  (attacks||[]).forEach(a => {
+    const row = hosts.indexOf(a.host); if(row < 0) return;
+    const x0 = (new Date(a.start)-t0)/60000, x1 = (new Date(a.end)-t0)/60000;
+    ctx.strokeStyle = cs.getPropertyValue('--ink').trim(); ctx.lineWidth = 1.5;
+    ctx.strokeRect(labelW + x0*colW - 1, row*rowH, Math.max((x1-x0)*colW, 4)+2, rowH);
+  });
+  ctx.fillStyle = ink; ctx.textBaseline='top';
+  ctx.fillText(fmt(h.t0), labelW, hosts.length*rowH+6);
+  ctx.textAlign='right'; ctx.fillText(fmt(t0 + h.n_minutes*60000), W, hosts.length*rowH+6); ctx.textAlign='left';
+  $('#heatLegend').innerHTML = `<span><span class="sw" style="background:${c1}"></span>normal minute (darker = higher score)</span>
+    <span><span class="sw" style="background:${bad}"></span>flagged by model</span>` +
+    (attacks ? `<span><span class="sw" style="border:2px solid ${cs.getPropertyValue('--ink').trim()}"></span>true attack window</span>` : '');
+  $('#heatPanel').classList.remove('hidden');
+}
+
+let last = null;
+function show(d, labelled){
+  last = {d, labelled};
+  if (labelled) renderCards(d); else $('#metricsPanel').classList.add('hidden');
+  renderHeat(d.heatmap, labelled ? d.attacks : null);
+  renderAlerts(d.alerts, labelled);
+}
+window.addEventListener('resize', () => { if(last) renderHeat(last.d.heatmap, last.labelled ? last.d.attacks : null); });
+
+async function runDemo(){
+  $('#runDemo').disabled = true; status('Generating logs and scoring…');
+  try { show(await call('api/demo?seed=' + encodeURIComponent($('#seed').value || 7)), true); status(''); }
+  catch(e){ status(e.message, true); }
+  finally { $('#runDemo').disabled = false; }
+}
+async function upload(file){
+  status('Scoring ' + file.name + '…');
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const d = await call('api/upload', {method:'POST', body: fd});
+    show(d, false); status(`${d.n_events.toLocaleString()} events scored · ${d.alerts.length} alert(s)`);
+  } catch(e){ status(e.message, true); }
+}
+$('#runDemo').onclick = runDemo;
+$('#pick').onclick = () => $('#file').click();
+$('#file').onchange = e => { if(e.target.files[0]) upload(e.target.files[0]); e.target.value=''; };
+
+if (window.__SNAPSHOT__) {   // static hosted preview: no server, pre-computed result
+  document.querySelectorAll('.controls > *:not(#status)').forEach(el => el.classList.add('hidden'));
+  const n = $('#snapnote'); n.classList.remove('hidden');
+  n.textContent = 'Read-only snapshot of one run (seed ' + window.__SNAPSHOT__.seed + '). The full app, with live demo runs and CSV upload, runs from the Flask project.';
+  show(window.__SNAPSHOT__, true);
+} else { runDemo(); }
+</script>
+</body>
+</html>

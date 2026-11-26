@@ -1,0 +1,95 @@
+{
+  "n_events": 59502,
+  "chosen_alert_quantile": 0.999,
+  "validation_sweep": [
+    {
+      "alert_quantile": 0.95,
+      "val_recall": 1.0,
+      "val_precision": 0.022900763358778626,
+      "val_incidents": 262,
+      "val_f1": 0.04477611940298508
+    },
+    {
+      "alert_quantile": 0.97,
+      "val_recall": 1.0,
+      "val_precision": 0.0335195530726257,
+      "val_incidents": 179,
+      "val_f1": 0.06486486486486485
+    },
+    {
+      "alert_quantile": 0.98,
+      "val_recall": 1.0,
+      "val_precision": 0.05357142857142857,
+      "val_incidents": 112,
+      "val_f1": 0.10169491525423728
+    },
+    {
+      "alert_quantile": 0.99,
+      "val_recall": 0.3333333333333333,
+      "val_precision": 0.05405405405405406,
+      "val_incidents": 37,
+      "val_f1": 0.09302325581395349
+    },
+    {
+      "alert_quantile": 0.995,
+      "val_recall": 0.3333333333333333,
+      "val_precision": 0.13333333333333333,
+      "val_incidents": 15,
+      "val_f1": 0.19047619047619044
+    },
+    {
+      "alert_quantile": 0.999,
+      "val_recall": 0.3333333333333333,
+      "val_precision": 0.2857142857142857,
+      "val_incidents": 7,
+      "val_f1": 0.30769230769230765
+    }
+  ],
+  "test": {
+    "isolation_forest": {
+      "attack_windows": 13,
+      "windows_detected": 6,
+      "recall": 0.46153846153846156,
+      "incidents": 16,
+      "true_incidents": 6,
+      "false_incidents": 10,
+      "precision": 0.375,
+      "by_kind": {
+        "brute_force": "5/5",
+        "exfiltration": "1/4",
+        "port_scan": "0/4"
+      },
+      "by_intensity": {
+        "obvious": "3/7",
+        "stealthy": "3/6"
+      }
+    },
+    "rule_baseline": {
+      "attack_windows": 13,
+      "windows_detected": 11,
+      "recall": 0.8461538461538461,
+      "incidents": 13,
+      "true_incidents": 12,
+      "false_incidents": 1,
+      "precision": 0.9230769230769231,
+      "by_kind": {
+        "brute_force": "5/5",
+        "exfiltration": "2/4",
+        "port_scan": "4/4"
+      },
+      "by_intensity": {
+        "obvious": "7/7",
+        "stealthy": "4/6"
+      }
+    }
+  },
+  "validation_rule_baseline": {
+    "attack_windows": 6,
+    "windows_detected": 3,
+    "recall": 0.5,
+    "incidents": 9,
+    "true_incidents": 3,
+    "false_incidents": 6,
+    "precision": 0.3333333333333333
+  }
+}
